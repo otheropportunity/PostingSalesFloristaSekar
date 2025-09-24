@@ -1,171 +1,26 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
   <meta charset="UTF-8">
-  <title>Florista Sekar — Receipt OCR → Excel</title>
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
-  <style>
-    body { font-family: Arial, sans-serif; margin: 20px; text-align: center; }
-    h2 { color: #c2185b; }
-    textarea { width: 90%; height: 120px; margin-top: 10px; }
-    table { width: 95%; margin: 20px auto; border-collapse: collapse; }
-    th, td { border: 1px solid #ccc; padding: 6px; text-align: left; }
-    th { background: #f0f0f0; }
-    button { margin: 5px; padding: 8px 15px; border: none; cursor: pointer; border-radius: 5px; }
-    .btn-process { background: #2196f3; color: white; }
-    .btn-download { background: #4caf50; color: white; }
-    .btn-clear { background: #f44336; color: white; }
-  </style>
+  <title>OCR to Excel</title>
+  <link rel="stylesheet" href="https://pyscript.net/latest/pyscript.css" />
+  <script defer src="https://pyscript.net/latest/pyscript.js"></script>
 </head>
 <body>
-  <h2>Florista Sekar — Receipt OCR → Excel</h2>
-  <input type="file" id="fileInput" accept="image/*" multiple>
-  <br><br>
-  <button class="btn-process" onclick="processFiles()">Process Selected</button>
-  <button class="btn-download" onclick="downloadExcel()">Download Excel</button>
-  <button class="btn-clear" onclick="clearAll()">Clear All</button>
-  <br><br>
+  <h1>Upload JPG/PNG → Extract to Excel</h1>
+  <input type="file" id="fileInput" />
 
-  <h3>Raw OCR Output</h3>
-  <textarea id="ocrOutput" readonly></textarea>
+  <py-script>
+import cv2, pytesseract, pandas as pd, re
+from pyodide.http import open_url
+from js import document
 
-  <h3>Parsed Rows</h3>
-  <table id="resultTable">
-    <thead>
-      <tr><th>Tanggal</th><th>Keterangan</th><th>Debit</th><th>Kredit</th></tr>
-    </thead>
-    <tbody></tbody>
-  </table>
+def process_file(event):
+    file = document.getElementById("fileInput").files[0]
+    # Here you’d need to use pyodide to read file bytes
+    # and run your OCR script as in Python
 
-<script>
-let allRows = [];
-
-// 🔹 Common replacements for OCR mistakes
-const corrections = {
-  "flowess": "flowers",
-  "flovvers": "flowers",
-  "fowers": "flowers",
-  "arficial": "artificial",
-  "artifical": "artificial",
-  "mawar fx": "mawar 4x",
-  "cah": "cash",
-  "csah": "cash",
-  "tre": "TF",
-  "trf": "TF",
-  "tf": "TF"
-};
-
-// Apply corrections to a line
-function autoCorrect(text) {
-  let clean = text.toLowerCase();
-  for (let wrong in corrections) {
-    let right = corrections[wrong];
-    let regex = new RegExp("\\b" + wrong + "\\b", "gi");
-    clean = clean.replace(regex, right);
-  }
-  return clean;
-}
-
-// Clean + parse OCR text
-function parseText(text) {
-  const rows = [];
-  const lines = text.split("\n").map(l => l.trim()).filter(l => l);
-
-  let lastDate = "";
-  for (let line of lines) {
-    let clean = line.replace(/[|]/g, " ")
-                    .replace(/[()]/g, "")
-                    .replace(/\s+/g, " ")
-                    .trim();
-
-    if (!clean) continue;
-
-    // 🔹 Apply autocorrect
-    clean = autoCorrect(clean);
-
-    // Find number like 250.000 or 70,000
-    let match = clean.match(/([\d.,]+)/);
-    let debit = "", kredit = "";
-
-    if (match) {
-      let amount = match[1];
-      if (/\b(cash|tf|transfer)\b/i.test(clean)) {
-        kredit = amount;
-      } else {
-        debit = amount;
-      }
-      clean = clean.replace(amount, "").trim();
-    }
-
-    rows.push([lastDate, clean, debit, kredit]);
-  }
-  return rows;
-}
-
-// Process selected files with OCR
-function processFiles() {
-  const input = document.getElementById('fileInput');
-  const output = document.getElementById('ocrOutput');
-  const tableBody = document.querySelector('#resultTable tbody');
-  output.value = "";
-  tableBody.innerHTML = "";
-  allRows = [];
-
-  if (!input.files.length) {
-    alert("Please select at least one image file.");
-    return;
-  }
-
-  Array.from(input.files).forEach(file => {
-    const reader = new FileReader();
-    reader.onload = function(e) {
-      Tesseract.recognize(e.target.result, 'eng', {
-        logger: m => console.log(m)
-      }).then(({ data: { text } }) => {
-        output.value += "\n" + text;
-        const rows = parseText(text);
-        allRows = allRows.concat(rows);
-        updateTable();
-      });
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
-// Update table with parsed rows
-function updateTable() {
-  const tableBody = document.querySelector('#resultTable tbody');
-  tableBody.innerHTML = "";
-  allRows.forEach(r => {
-    const tr = document.createElement("tr");
-    r.forEach(c => {
-      const td = document.createElement("td");
-      td.textContent = c;
-      tr.appendChild(td);
-    });
-    tableBody.appendChild(tr);
-  });
-}
-
-// Export table to Excel
-function downloadExcel() {
-  if (allRows.length === 0) {
-    alert("No data to export!");
-    return;
-  }
-  const ws = XLSX.utils.aoa_to_sheet([["Tanggal","Keterangan","Debit","Kredit"], ...allRows]);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Receipts");
-  XLSX.writeFile(wb, "Florista_Sekar_Sales.xlsx");
-}
-
-// Clear everything
-function clearAll() {
-  document.getElementById('ocrOutput').value = "";
-  document.querySelector('#resultTable tbody').innerHTML = "";
-  allRows = [];
-}
-</script>
+print("✅ Python is running inside HTML")
+  </py-script>
 </body>
 </html>
