@@ -2,46 +2,57 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Excel Upload & Process</title>
+  <title>Florista Sekar — Receipt OCR → Excel</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.1.1/dist/tesseract.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    h2 { color: #c2185b; }
+    #rawOutput { width: 100%; height: 120px; border: 1px solid #ccc; padding: 8px; overflow-y: auto; background: #f9f9f9; }
+    table { border-collapse: collapse; margin-top: 10px; width: 100%; }
+    th, td { border: 1px solid #ccc; padding: 6px; }
+    input { margin-top: 10px; }
+  </style>
 </head>
 <body>
-  <h2>Upload Excel File</h2>
-  <input type="file" id="upload" accept=".xlsx,.xls" />
+  <h2>Florista Sekar — Receipt OCR → Excel</h2>
+  <input type="file" id="fileInput" accept="image/*">
+  <button id="processBtn">Process Selected</button>
+  <button id="downloadBtn">Download Excel</button>
+  <button id="clearBtn">Clear All</button>
 
-  <h2>Data Preview</h2>
-  <table id="dataTable" border="1" style="border-collapse:collapse; margin-top:10px;">
+  <h3>Raw OCR output</h3>
+  <div id="rawOutput">-</div>
+
+  <h3>Parsed rows</h3>
+  <table id="dataTable">
     <thead></thead>
     <tbody></tbody>
   </table>
 
-  <br>
-  <button id="processBtn">Process Selected</button>
-  <span id="statusMsg" style="margin-left:10px; font-weight:bold; color:#0066cc;"></span>
-
   <script>
-    let uploadedData = [];
+    let parsedData = [];
 
-    // Handle Excel upload
-    document.getElementById("upload").addEventListener("change", function(e) {
-      let file = e.target.files[0];
-      if (!file) return;
+    document.getElementById("processBtn").addEventListener("click", function() {
+      let file = document.getElementById("fileInput").files[0];
+      if (!file) {
+        alert("Please select an image first.");
+        return;
+      }
 
-      let reader = new FileReader();
-      reader.onload = function(e) {
-        let data = new Uint8Array(e.target.result);
-        let workbook = XLSX.read(data, { type: "array" });
+      document.getElementById("rawOutput").innerText = "⏳ Processing...";
 
-        let sheetName = workbook.SheetNames[0];
-        let sheet = workbook.Sheets[sheetName];
-        uploadedData = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+      Tesseract.recognize(file, 'eng').then(({ data: { text } }) => {
+        document.getElementById("rawOutput").innerText = text;
 
-        renderTable(uploadedData);
-      };
-      reader.readAsArrayBuffer(file);
+        // Split OCR output into lines
+        let lines = text.split("\n").filter(l => l.trim() !== "");
+        parsedData = lines.map(line => line.split(/\s+/)); // split by spaces
+
+        renderTable(parsedData);
+      });
     });
 
-    // Render table with checkboxes
     function renderTable(data) {
       let tableHead = document.querySelector("#dataTable thead");
       let tableBody = document.querySelector("#dataTable tbody");
@@ -50,66 +61,52 @@
 
       if (data.length === 0) return;
 
-      // Header row
-      let headerRow = "<tr><th><input type='checkbox' id='selectAll'></th>";
-      data[0].forEach(col => {
-        headerRow += `<th>${col}</th>`;
-      });
+      // Simple header
+      let headerRow = "<tr>";
+      let maxCols = Math.max(...data.map(row => row.length));
+      for (let i = 0; i < maxCols; i++) {
+        headerRow += `<th>Col ${i+1}</th>`;
+      }
       headerRow += "</tr>";
       tableHead.innerHTML = headerRow;
 
-      // Data rows
-      for (let i = 1; i < data.length; i++) {
-        let row = `<tr><td><input type='checkbox' class='rowCheckbox'></td>`;
-        data[i].forEach(cell => {
-          row += `<td>${cell !== undefined ? cell : ""}</td>`;
-        });
-        row += "</tr>";
-        tableBody.innerHTML += row;
-      }
-
-      // Handle Select All
-      document.getElementById("selectAll").addEventListener("change", function() {
-        let checkboxes = document.querySelectorAll(".rowCheckbox");
-        checkboxes.forEach(cb => cb.checked = this.checked);
+      // Fill rows
+      data.forEach(row => {
+        let tr = "<tr>";
+        for (let i = 0; i < maxCols; i++) {
+          tr += `<td contenteditable="true">${row[i] || ""}</td>`;
+        }
+        tr += "</tr>";
+        tableBody.innerHTML += tr;
       });
     }
 
-    // Process selected rows
-    document.getElementById("processBtn").addEventListener("click", function() {
-      let btn = this;
-      let status = document.getElementById("statusMsg");
-
-      let selectedRows = [];
-      let checkboxes = document.querySelectorAll(".rowCheckbox");
-
-      checkboxes.forEach((cb, index) => {
-        if (cb.checked) {
-          selectedRows.push(uploadedData[index + 1]); // +1 because row[0] = header
-        }
-      });
-
-      if (selectedRows.length === 0) {
-        alert("No rows selected!");
+    // Download Excel
+    document.getElementById("downloadBtn").addEventListener("click", function() {
+      if (parsedData.length === 0) {
+        alert("No data to export.");
         return;
       }
 
-      // Show processing
-      btn.disabled = true;
-      status.innerHTML = "⏳ Processing...";
+      let table = [];
+      document.querySelectorAll("#dataTable tbody tr").forEach(tr => {
+        let row = [];
+        tr.querySelectorAll("td").forEach(td => row.push(td.innerText));
+        table.push(row);
+      });
 
-      // Simulate processing delay
-      setTimeout(() => {
-        // Export selected rows to Excel
-        let newData = [uploadedData[0], ...selectedRows]; // Keep header row
-        let worksheet = XLSX.utils.aoa_to_sheet(newData);
-        let newWorkbook = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(newWorkbook, worksheet, "Processed");
-        XLSX.writeFile(newWorkbook, "processed.xlsx");
+      let worksheet = XLSX.utils.aoa_to_sheet(table);
+      let wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, worksheet, "OCR_Data");
+      XLSX.writeFile(wb, "receipt_data.xlsx");
+    });
 
-        status.innerHTML = "✅ Completed! File downloaded.";
-        btn.disabled = false;
-      }, 2000);
+    // Clear everything
+    document.getElementById("clearBtn").addEventListener("click", function() {
+      document.getElementById("rawOutput").innerText = "-";
+      document.querySelector("#dataTable thead").innerHTML = "";
+      document.querySelector("#dataTable tbody").innerHTML = "";
+      parsedData = [];
     });
   </script>
 </body>
