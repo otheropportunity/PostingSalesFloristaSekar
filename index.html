@@ -4,31 +4,31 @@
   <meta charset="UTF-8">
   <title>Florista Sekar — Receipt OCR → Excel</title>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
   <style>
-    body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
-    h2 { color: #b30059; }
-    button { margin: 5px; padding: 8px 14px; border: none; border-radius: 5px; cursor: pointer; }
-    #process { background: #007bff; color: white; }
-    #download { background: #28a745; color: white; }
-    #clear { background: #dc3545; color: white; }
-    table { margin: 20px auto; border-collapse: collapse; width: 90%; }
+    body { font-family: Arial, sans-serif; margin: 20px; text-align: center; }
+    h2 { color: #c2185b; }
+    textarea { width: 90%; height: 120px; margin-top: 10px; }
+    table { width: 95%; margin: 20px auto; border-collapse: collapse; }
     th, td { border: 1px solid #ccc; padding: 6px; text-align: left; }
-    th { background: #f2f2f2; }
-    pre { text-align: left; max-height: 200px; overflow: auto; background: #f9f9f9; padding: 10px; }
+    th { background: #f0f0f0; }
+    button { margin: 5px; padding: 8px 15px; border: none; cursor: pointer; border-radius: 5px; }
+    .btn-process { background: #2196f3; color: white; }
+    .btn-download { background: #4caf50; color: white; }
+    .btn-clear { background: #f44336; color: white; }
   </style>
 </head>
 <body>
   <h2>Florista Sekar — Receipt OCR → Excel</h2>
-
-  <input type="file" id="fileInput" multiple accept="image/*">
+  <input type="file" id="fileInput" accept="image/*" multiple>
   <br><br>
-  <button id="process">Process Selected</button>
-  <button id="download">Download Excel</button>
-  <button id="clear">Clear All</button>
+  <button class="btn-process" onclick="processFiles()">Process Selected</button>
+  <button class="btn-download" onclick="downloadExcel()">Download Excel</button>
+  <button class="btn-clear" onclick="clearAll()">Clear All</button>
+  <br><br>
 
   <h3>Raw OCR Output</h3>
-  <pre id="ocrOutput">-</pre>
+  <textarea id="ocrOutput" readonly></textarea>
 
   <h3>Parsed Rows</h3>
   <table id="resultTable">
@@ -38,81 +38,134 @@
     <tbody></tbody>
   </table>
 
-  <script>
-    let allRows = [];
+<script>
+let allRows = [];
 
-    // Helper: parse OCR text into structured rows
-    function parseText(text) {
-      const rows = [];
-      const lines = text.split("\n").map(l => l.trim()).filter(l => l);
+// 🔹 Common replacements for OCR mistakes
+const corrections = {
+  "flowess": "flowers",
+  "flovvers": "flowers",
+  "fowers": "flowers",
+  "arficial": "artificial",
+  "artifical": "artificial",
+  "mawar fx": "mawar 4x",
+  "cah": "cash",
+  "csah": "cash",
+  "tre": "TF",
+  "trf": "TF",
+  "tf": "TF"
+};
 
-      let lastDate = "";
-      const regex = /^(\d{1,2}\/\d{1,2})?\s*(.+?)\s+([\d.]+)?\s*(\(\w+\))?$/;
+// Apply corrections to a line
+function autoCorrect(text) {
+  let clean = text.toLowerCase();
+  for (let wrong in corrections) {
+    let right = corrections[wrong];
+    let regex = new RegExp("\\b" + wrong + "\\b", "gi");
+    clean = clean.replace(regex, right);
+  }
+  return clean;
+}
 
-      for (let line of lines) {
-        const match = line.match(regex);
-        if (match) {
-          const tanggal = match[1] ? match[1] : lastDate;
-          if (match[1]) lastDate = match[1];
-          const ket = match[2];
-          const debit = match[3] || "";
-          const kredit = match[4] || "";
-          rows.push([tanggal, ket, debit, kredit]);
-        }
+// Clean + parse OCR text
+function parseText(text) {
+  const rows = [];
+  const lines = text.split("\n").map(l => l.trim()).filter(l => l);
+
+  let lastDate = "";
+  for (let line of lines) {
+    let clean = line.replace(/[|]/g, " ")
+                    .replace(/[()]/g, "")
+                    .replace(/\s+/g, " ")
+                    .trim();
+
+    if (!clean) continue;
+
+    // 🔹 Apply autocorrect
+    clean = autoCorrect(clean);
+
+    // Find number like 250.000 or 70,000
+    let match = clean.match(/([\d.,]+)/);
+    let debit = "", kredit = "";
+
+    if (match) {
+      let amount = match[1];
+      if (/\b(cash|tf|transfer)\b/i.test(clean)) {
+        kredit = amount;
+      } else {
+        debit = amount;
       }
-      return rows;
+      clean = clean.replace(amount, "").trim();
     }
 
-    // Process images
-    document.getElementById("process").onclick = async () => {
-      const files = document.getElementById("fileInput").files;
-      if (!files.length) {
-        alert("Please select at least one image.");
-        return;
-      }
+    rows.push([lastDate, clean, debit, kredit]);
+  }
+  return rows;
+}
 
-      document.getElementById("ocrOutput").textContent = "Processing...";
+// Process selected files with OCR
+function processFiles() {
+  const input = document.getElementById('fileInput');
+  const output = document.getElementById('ocrOutput');
+  const tableBody = document.querySelector('#resultTable tbody');
+  output.value = "";
+  tableBody.innerHTML = "";
+  allRows = [];
 
-      allRows = [];
-      for (let file of files) {
-        const { data: { text } } = await Tesseract.recognize(file, 'eng');
-        document.getElementById("ocrOutput").textContent = text;
+  if (!input.files.length) {
+    alert("Please select at least one image file.");
+    return;
+  }
+
+  Array.from(input.files).forEach(file => {
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      Tesseract.recognize(e.target.result, 'eng', {
+        logger: m => console.log(m)
+      }).then(({ data: { text } }) => {
+        output.value += "\n" + text;
         const rows = parseText(text);
-        allRows.push(...rows);
-      }
-
-      // Fill table
-      const tbody = document.querySelector("#resultTable tbody");
-      tbody.innerHTML = "";
-      allRows.forEach(r => {
-        const tr = document.createElement("tr");
-        r.forEach(cell => {
-          const td = document.createElement("td");
-          td.textContent = cell;
-          tr.appendChild(td);
-        });
-        tbody.appendChild(tr);
+        allRows = allRows.concat(rows);
+        updateTable();
       });
     };
+    reader.readAsDataURL(file);
+  });
+}
 
-    // Download Excel
-    document.getElementById("download").onclick = () => {
-      if (!allRows.length) {
-        alert("No data to download!");
-        return;
-      }
-      const ws = XLSX.utils.aoa_to_sheet([["Tanggal","Keterangan","Debit","Kredit"], ...allRows]);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "Receipts");
-      XLSX.writeFile(wb, "Florista_Sekar.xlsx");
-    };
+// Update table with parsed rows
+function updateTable() {
+  const tableBody = document.querySelector('#resultTable tbody');
+  tableBody.innerHTML = "";
+  allRows.forEach(r => {
+    const tr = document.createElement("tr");
+    r.forEach(c => {
+      const td = document.createElement("td");
+      td.textContent = c;
+      tr.appendChild(td);
+    });
+    tableBody.appendChild(tr);
+  });
+}
 
-    // Clear everything
-    document.getElementById("clear").onclick = () => {
-      document.getElementById("ocrOutput").textContent = "-";
-      document.querySelector("#resultTable tbody").innerHTML = "";
-      allRows = [];
-    };
-  </script>
+// Export table to Excel
+function downloadExcel() {
+  if (allRows.length === 0) {
+    alert("No data to export!");
+    return;
+  }
+  const ws = XLSX.utils.aoa_to_sheet([["Tanggal","Keterangan","Debit","Kredit"], ...allRows]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Receipts");
+  XLSX.writeFile(wb, "Florista_Sekar_Sales.xlsx");
+}
+
+// Clear everything
+function clearAll() {
+  document.getElementById('ocrOutput').value = "";
+  document.querySelector('#resultTable tbody').innerHTML = "";
+  allRows = [];
+}
+</script>
 </body>
 </html>
