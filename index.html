@@ -1,26 +1,83 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>OCR to Excel</title>
-  <link rel="stylesheet" href="https://pyscript.net/latest/pyscript.css" />
-  <script defer src="https://pyscript.net/latest/pyscript.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OCR to Excel - Florista Sekar</title>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
+    .preview { max-width: 300px; margin: 15px auto; display: block; border: 1px solid #ddd; }
+    .btn { padding: 10px 15px; margin: 10px; background: #28a745; color: white; border: none; cursor: pointer; border-radius: 5px; }
+    .btn:disabled { background: gray; }
+    pre { text-align: left; background: #f4f4f4; padding: 10px; border-radius: 5px; max-height: 200px; overflow-y: auto; }
+  </style>
 </head>
 <body>
-  <h1>Upload JPG/PNG → Extract to Excel</h1>
-  <input type="file" id="fileInput" />
+  <h1>📸 Upload Sales Slip → Extract to Excel</h1>
 
-  <py-script>
-import cv2, pytesseract, pandas as pd, re
-from pyodide.http import open_url
-from js import document
+  <input type="file" id="fileInput" accept="image/*" />
+  <img id="preview" class="preview" style="display:none;" />
+  <br>
+  <button id="processBtn" class="btn" disabled>Process Selected</button>
+  <button id="downloadBtn" class="btn" disabled>Download Excel</button>
 
-def process_file(event):
-    file = document.getElementById("fileInput").files[0]
-    # Here you’d need to use pyodide to read file bytes
-    # and run your OCR script as in Python
+  <h3>Extracted Text:</h3>
+  <pre id="output"></pre>
 
-print("✅ Python is running inside HTML")
-  </py-script>
+  <script>
+    let ocrResult = "";
+    let structuredData = [];
+
+    document.getElementById("fileInput").addEventListener("change", function(event) {
+      const file = event.target.files[0];
+      if (file) {
+        document.getElementById("preview").src = URL.createObjectURL(file);
+        document.getElementById("preview").style.display = "block";
+        document.getElementById("processBtn").disabled = false;
+      }
+    });
+
+    document.getElementById("processBtn").addEventListener("click", function() {
+      const file = document.getElementById("fileInput").files[0];
+      if (!file) return;
+
+      document.getElementById("output").textContent = "⏳ Processing OCR...";
+      Tesseract.recognize(file, 'eng', {
+        logger: m => console.log(m)
+      }).then(({ data: { text } }) => {
+        ocrResult = text;
+        document.getElementById("output").textContent = ocrResult;
+
+        // Parse into table-like data
+        structuredData = [];
+        const lines = ocrResult.split("\n").map(l => l.trim()).filter(l => l);
+        lines.forEach(line => {
+          // Try to split into columns: date, info, debit, credit
+          const match = line.match(/^(\d{1,2}\/\d{1,2})\s+(.*?)\s+([\d.,]+)?\s*(\(.*\))?$/);
+          if (match) {
+            structuredData.push([
+              match[1],            // Date
+              match[2],            // Info
+              match[3] || "",      // Debit
+              match[4] || ""       // Credit
+            ]);
+          }
+        });
+
+        document.getElementById("downloadBtn").disabled = structuredData.length === 0;
+      });
+    });
+
+    document.getElementById("downloadBtn").addEventListener("click", function() {
+      if (structuredData.length === 0) return;
+
+      const ws = XLSX.utils.aoa_to_sheet([["Tanggal","Keterangan","Debet","Kredit"], ...structuredData]);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Sales");
+      XLSX.writeFile(wb, "output.xlsx");
+    });
+  </script>
 </body>
 </html>
