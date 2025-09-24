@@ -1,0 +1,123 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Receipt OCR → Excel (Florista Sekar)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <style>
+    body{font-family:Inter,system-ui,Segoe UI,Arial;background:#fbfaf9;color:#222;margin:0;padding:20px}
+    h1{color:#c94a8a;text-align:center}
+    .wrap{max-width:1100px;margin:18px auto;padding:20px;background:#fff;border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.06)}
+    .controls{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+    input[type=file]{padding:8px}
+    button{background:#25d366;color:#fff;border:none;padding:10px 14px;border-radius:8px;cursor:pointer}
+    button.secondary{background:#3b82f6}
+    .progress{margin:8px 0;color:#666}
+    pre{background:#f5f5f7;padding:10px;border-radius:6px;overflow:auto;max-height:200px}
+    table{width:100%;border-collapse:collapse;margin-top:12px}
+    th,td{padding:8px;border:1px solid #eee;text-align:left;font-size:14px}
+    .small{font-size:13px;color:#666}
+    .center{text-align:center}
+    .tag{background:#f0f0f3;padding:3px 6px;border-radius:6px;margin-right:6px}
+    .actions{display:flex;gap:8px;flex-wrap:wrap}
+    .note{font-size:13px;color:#666;margin-top:8px}
+    @media(max-width:700px){.controls{flex-direction:column}table{font-size:12px}}
+  </style>
+
+  <!-- Tesseract.js and SheetJS from CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Florista Sekar — Receipt OCR → Excel</h1>
+
+    <div class="controls">
+      <input id="files" type="file" accept="image/*" multiple>
+      <button id="processBtn" class="secondary">Process Selected</button>
+      <button id="downloadBtn">Download Excel</button>
+      <button id="clearBtn">Clear All</button>
+    </div>
+
+    <div class="progress" id="status">Select one or more receipt images (JPG/PNG), then click <strong>Process Selected</strong>.</div>
+
+    <div style="display:flex;gap:12px;flex-wrap:wrap">
+      <div style="flex:1;min-width:280px">
+        <h3>Raw OCR output</h3>
+        <pre id="rawText">—</pre>
+      </div>
+
+      <div style="flex:1;min-width:300px">
+        <h3>Parsed rows</h3>
+        <div class="note">You can review results below. Edit cells in the table if OCR made mistakes, then click <strong>Download Excel</strong>.</div>
+        <div id="tableWrap"></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+/*
+  OCR + Parse + Export demo.
+  Uses Tesseract.js (in-browser OCR) and SheetJS (xlsx export).
+  Parsing is heuristic: it handles date lines like 4/9 or 15/09 and inherits previous date when date is blank.
+*/
+
+const filesEl = document.getElementById('files');
+const processBtn = document.getElementById('processBtn');
+const rawTextEl = document.getElementById('rawText');
+const tableWrap = document.getElementById('tableWrap');
+const statusEl = document.getElementById('status');
+const downloadBtn = document.getElementById('downloadBtn');
+const clearBtn = document.getElementById('clearBtn');
+
+let parsedRows = []; // final array of objects
+
+// helper: normalize amount string into number string (e.g. '250.000' -> '250000' or '250000.50')
+function normalizeAmount(s) {
+  if(!s) return '';
+  // remove spaces, currency symbols
+  s = s.replace(/[^\d.,-]/g, '').trim();
+  // if contains both '.' and ',', decide which is thousand sep: common: 250.000 or 250,000
+  if (s.indexOf('.')>-1 && s.indexOf(',')>-1) {
+    // if . appears before , then maybe European? fallback: remove dots as thousands
+    if (s.indexOf('.') < s.indexOf(',')) {
+      s = s.replace(/\./g,'').replace(',', '.');
+    } else {
+      s = s.replace(/,/g,'').replace('.', '.');
+    }
+  } else {
+    // only dots or only commas
+    // treat '.' as thousand separator if groups of 3 digits, else decimal
+    if (s.indexOf('.') > -1 && /\.\d{3}$/.test(s)) {
+      s = s.replace(/\./g,'');
+    } else if (s.indexOf(',') > -1 && /,\d{3}$/.test(s)) {
+      s = s.replace(/,/g,'');
+    } else {
+      // replace comma with dot for decimals
+      s = s.replace(/,/g,'.');
+    }
+  }
+  return s;
+}
+
+// parse OCR text into structured rows
+function parseReceiptText(text) {
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l !== '');
+  let results = [];
+  let currentDate = '';
+  // regexes
+  const dateRe = /^(\d{1,2}\s*[\/\-]\s*\d{1,2})(?:\s*\/\s*\d{2,4})?/; // matches 4/9 or 15/09 etc.
+  const amountRe = /(\d{1,3}(?:[.,]\d{3})+(?:[.,]\d+)?|\d+(?:[.,]\d+)?)/g; // matches 250.000, 65.000, 1000, 1000.50
+  const typeRe = /\(([^)]+)\)/; // (cash), (tf), etc.
+
+  for (let i=0;i<lines.length;i++) {
+    const raw = lines[i];
+
+    // try to detect a table row: some have date at start
+    let rowDate = null;
+    const dateMatch = raw.match(dateRe);
+    if (dateMatch) {
+      rowDate = dateMatch[1].replace(/\s+/g,''); // e.g. "4/9" or "15/09"
+      // normalize to dd/mm/yyyy-ish (we only have day/month) -> keep as dd/mm
+      // if month missing zero-pad
+      const parts = row
