@@ -1,77 +1,118 @@
-import cv2
-import pytesseract
-import pandas as pd
-import re
-import os
-from glob import glob
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Florista Sekar — Receipt OCR → Excel</title>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
+    h2 { color: #b30059; }
+    button { margin: 5px; padding: 8px 14px; border: none; border-radius: 5px; cursor: pointer; }
+    #process { background: #007bff; color: white; }
+    #download { background: #28a745; color: white; }
+    #clear { background: #dc3545; color: white; }
+    table { margin: 20px auto; border-collapse: collapse; width: 90%; }
+    th, td { border: 1px solid #ccc; padding: 6px; text-align: left; }
+    th { background: #f2f2f2; }
+    pre { text-align: left; max-height: 200px; overflow: auto; background: #f9f9f9; padding: 10px; }
+  </style>
+</head>
+<body>
+  <h2>Florista Sekar — Receipt OCR → Excel</h2>
 
-# === CONFIG ===
-INPUT_FOLDER = "images"        # put all JPG/PNG files here
-OUTPUT_FILE = "output.xlsx"
+  <input type="file" id="fileInput" multiple accept="image/*">
+  <br><br>
+  <button id="process">Process Selected</button>
+  <button id="download">Download Excel</button>
+  <button id="clear">Clear All</button>
 
-# === 1. Load and preprocess image ===
-def preprocess_image(path):
-    img = cv2.imread(path)
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    gray = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
-    return gray
+  <h3>Raw OCR Output</h3>
+  <pre id="ocrOutput">-</pre>
 
-# === 2. Extract text with Tesseract OCR ===
-def extract_text(image):
-    config = r'--oem 3 --psm 6'
-    return pytesseract.image_to_string(image, config=config)
+  <h3>Parsed Rows</h3>
+  <table id="resultTable">
+    <thead>
+      <tr><th>Tanggal</th><th>Keterangan</th><th>Debit</th><th>Kredit</th></tr>
+    </thead>
+    <tbody></tbody>
+  </table>
 
-# === 3. Parse text into table (Tanggal, Keterangan, Debet, Kredit) ===
-def parse_text(text, filename):
-    rows = []
-    last_date = ""  # remember last date for continuation rows
+  <script>
+    let allRows = [];
 
-    for line in text.splitlines():
-        if not line.strip():
-            continue
+    // Helper: parse OCR text into structured rows
+    function parseText(text) {
+      const rows = [];
+      const lines = text.split("\n").map(l => l.trim()).filter(l => l);
 
-        # Normalize spaces
-        line = re.sub(r"\s+", " ", line.strip())
+      let lastDate = "";
+      const regex = /^(\d{1,2}\/\d{1,2})?\s*(.+?)\s+([\d.]+)?\s*(\(\w+\))?$/;
 
-        # Match columns: date, description, debit, credit
-        match = re.match(r"(\d{1,2}/\d{1,2})?\s*(.*?)\s+([\d.,]+)?\s*(\(.*\))?", line)
-        if match:
-            tanggal = match.group(1) if match.group(1) else last_date
-            keterangan = match.group(2).strip()
-            debet = match.group(3) if match.group(3) else ""
-            kredit = match.group(4).replace("(", "").replace(")", "") if match.group(4) else ""
+      for (let line of lines) {
+        const match = line.match(regex);
+        if (match) {
+          const tanggal = match[1] ? match[1] : lastDate;
+          if (match[1]) lastDate = match[1];
+          const ket = match[2];
+          const debit = match[3] || "";
+          const kredit = match[4] || "";
+          rows.push([tanggal, ket, debit, kredit]);
+        }
+      }
+      return rows;
+    }
 
-            if tanggal:  # update last_date when a new date appears
-                last_date = tanggal
+    // Process images
+    document.getElementById("process").onclick = async () => {
+      const files = document.getElementById("fileInput").files;
+      if (!files.length) {
+        alert("Please select at least one image.");
+        return;
+      }
 
-            rows.append([tanggal, keterangan, debet, kredit, os.path.basename(filename)])
+      document.getElementById("ocrOutput").textContent = "Processing...";
 
-    return rows
+      allRows = [];
+      for (let file of files) {
+        const { data: { text } } = await Tesseract.recognize(file, 'eng');
+        document.getElementById("ocrOutput").textContent = text;
+        const rows = parseText(text);
+        allRows.push(...rows);
+      }
 
-# === 4. Save results to Excel ===
-def save_to_excel(rows, filename):
-    df = pd.DataFrame(rows, columns=["Tanggal", "Keterangan", "Debet", "Kredit", "Source File"])
-    df.to_excel(filename, index=False)
-    print(f"✅ Saved to {filename} with {len(df)} rows")
+      // Fill table
+      const tbody = document.querySelector("#resultTable tbody");
+      tbody.innerHTML = "";
+      allRows.forEach(r => {
+        const tr = document.createElement("tr");
+        r.forEach(cell => {
+          const td = document.createElement("td");
+          td.textContent = cell;
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+    };
 
-# === MAIN ===
-if __name__ == "__main__":
-    all_rows = []
-    files = glob(os.path.join(INPUT_FOLDER, "*.jpg")) + glob(os.path.join(INPUT_FOLDER, "*.png"))
+    // Download Excel
+    document.getElementById("download").onclick = () => {
+      if (!allRows.length) {
+        alert("No data to download!");
+        return;
+      }
+      const ws = XLSX.utils.aoa_to_sheet([["Tanggal","Keterangan","Debit","Kredit"], ...allRows]);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Receipts");
+      XLSX.writeFile(wb, "Florista_Sekar.xlsx");
+    };
 
-    if not files:
-        print(f"❌ No images found in {INPUT_FOLDER}/")
-    else:
-        print(f"📂 Found {len(files)} image(s) in {INPUT_FOLDER}/")
-
-        for file in files:
-            print(f"🔎 Processing {file} ...")
-            gray_img = preprocess_image(file)
-            text = extract_text(gray_img)
-            rows = parse_text(text, file)
-            all_rows.extend(rows)
-
-        if all_rows:
-            save_to_excel(all_rows, OUTPUT_FILE)
-        else:
-            print("⚠️ No rows extracted from images.")
+    // Clear everything
+    document.getElementById("clear").onclick = () => {
+      document.getElementById("ocrOutput").textContent = "-";
+      document.querySelector("#resultTable tbody").innerHTML = "";
+      allRows = [];
+    };
+  </script>
+</body>
+</html>
